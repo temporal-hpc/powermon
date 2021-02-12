@@ -1,7 +1,4 @@
 # ***** POWER MONITOR *****
-NOTE: This tool includes code extracts from two repositories
-1) GPU PowerMonitor.cpp by Pamela-project https://github.com/pamela-project/slambench1
-2) Rapl Monitor tool by kentcz https://github.com/kentcz/rapl-tools
 
 
 INSTRUCTIONS:
@@ -26,5 +23,7 @@ NOTES:
 - on some CPUs, the DRAM value is not reachable and will give 0 Watts.
 - the CPU power value is for the whole chip. Currently (2020) msr rapl does not give
   per-core readings.
-
+- This tool includes code extracts from two repositories
+    - GPU PowerMonitor.cpp by Pamela-project https://github.com/pamela-project/slambench1
+    - Rapl Monitor tool by kentcz https://github.com/kentcz/rapl-tools
 
