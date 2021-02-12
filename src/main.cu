@@ -1,3 +1,8 @@
+/*
+ Copyright (c) 2021 Temporal Guild Group, Austral University of Chile, Valdivia Chile.
+ This file and all powermon software is licensed under the MIT License. 
+ Please refer to LICENSE for more details.
+ */
 
 #include <cuda.h>
 #include <mma.h>
