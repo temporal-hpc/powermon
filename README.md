@@ -1,4 +1,8 @@
 # ***** POWER MONITOR *****
+NOTE: This tool includes code extracts from two repositories
+1) GPU PowerMonitor.cpp by Pamela-project https://github.com/pamela-project/slambench1
+2) Rapl Monitor tool by kentcz https://github.com/kentcz/rapl-tools
+
 
 1) this program must run as admin (sudo)
 
