@@ -19,11 +19,11 @@ INSTRUCTIONS:
 
 
 NOTES:
-- some CPUs are incompatible with msr readings.
-- on some CPUs, the DRAM value is not reachable and will give 0 Watts.
-- the CPU power value is for the whole chip. Currently (2020) msr rapl does not give
+- Some CPUs are incompatible with msr readings.
+- On some CPUs, the DRAM value is not reachable and will give 0 Watts.
+- The CPU power value is for the whole chip. Currently (2020) msr rapl does not give
   per-core readings.
-- This tool includes code extracts from two repositories
+- This tool includes code extracts from two other repositories:
     - GPU PowerMonitor.cpp by Pamela-project https://github.com/pamela-project/slambench1
     - Rapl Monitor tool by kentcz https://github.com/kentcz/rapl-tools
 
