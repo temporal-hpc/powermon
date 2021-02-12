@@ -27,7 +27,7 @@
 
 int main(int argc, char **argv){
     if(argc != 2){
-        fprintf(stderr, "\nrun as ./motivus-powermon dt-ms\ndt-ms: sample interval in milliseconds\n\n");
+        fprintf(stderr, "\nrun as ./powermon dt-ms\ndt-ms: sample interval in milliseconds\n\n");
         exit(EXIT_FAILURE);
     }
     int ms = atoi(argv[1]); 
@@ -36,6 +36,7 @@ int main(int argc, char **argv){
     GPUPowerBegin("cpu", ms);
     CPUPowerBegin("gpu", ms);
 
+    printf("enter para terminar\n"); fflush(stdout);
     getchar();
     // end
     GPUPowerEnd();

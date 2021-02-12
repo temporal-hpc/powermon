@@ -1,4 +1,4 @@
-# ***** MOTIVUS POWER MONITOR *****
+# ***** POWER MONITOR *****
 
 1) this program must run as admin (sudo)
 
