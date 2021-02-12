@@ -4,8 +4,6 @@ NOTE: This tool includes code extracts from two repositories
 2) Rapl Monitor tool by kentcz https://github.com/kentcz/rapl-tools
 
 
-1) this program must run as admin (sudo)
-
 INSTRUCTIONS:
 1) load msr module (for CPU readings)
     $ sudo modprobe msr
