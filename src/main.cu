@@ -38,8 +38,8 @@ int main(int argc, char **argv){
     int ms = atoi(argv[1]); 
     // begin
     printf("Press enter to finalize...\n");
-    GPUPowerBegin("cpu", ms);
-    CPUPowerBegin("gpu", ms);
+    GPUPowerBegin("gpu", ms);
+    CPUPowerBegin("cpu", ms);
 
     printf("enter para terminar\n"); fflush(stdout);
     getchar();
