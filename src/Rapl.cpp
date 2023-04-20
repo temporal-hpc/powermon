@@ -58,6 +58,15 @@
 
 #define SIGNATURE_MASK                 0xFFFF0
 
+/* AMD MSR DEFINES */
+#define AMD_MSR_PWR_UNIT 	       0xC0010299
+#define AMD_MSR_CORE_ENERGY 	       0xC001029A
+#define AMD_MSR_PACKAGE_ENERGY         0xC001029B
+
+#define AMD_TIME_UNIT_MASK             0xF0000
+#define AMD_ENERGY_UNIT_MASK           0x1F00
+#define AMD_POWER_UNIT_MASK            0xF
+
 // CPU signature codes, useful for filtering uncompatible measures
 #define IVYBRIDGE_E                    0x306F0
 #define SANDYBRIDGE_E                  0x206D0
@@ -69,21 +78,35 @@
 Rapl::Rapl() {
 
 	open_msr();
+	vendor = detect_vendor();
 	pp1_supported = detect_pp1();
 
 	/* Read MSR_RAPL_POWER_UNIT Register */
-	uint64_t raw_value = read_msr(MSR_RAPL_POWER_UNIT);
+	uint64_t raw_value;
+	printf("trying vendor units %u\n", vendor);
+	if (vendor == 0){
+		raw_value = read_msr(MSR_RAPL_POWER_UNIT);
+	} else if (vendor == 1){
+		raw_value = read_msr(AMD_MSR_PWR_UNIT);
+	}
 	power_units = pow(0.5,	(double) (raw_value & 0xf));
 	energy_units = pow(0.5,	(double) ((raw_value >> 8) & 0x1f));
 	time_units = pow(0.5,	(double) ((raw_value >> 16) & 0xf));
 
 	/* Read MSR_PKG_POWER_INFO Register */
-	raw_value = read_msr(MSR_PKG_POWER_INFO);
-	thermal_spec_power = power_units * ((double)(raw_value & 0x7fff));
-	minimum_power = power_units * ((double)((raw_value >> 16) & 0x7fff));
-	maximum_power = power_units * ((double)((raw_value >> 32) & 0x7fff));
-	time_window = time_units * ((double)((raw_value >> 48) & 0x7fff));
-
+	if (vendor==0){
+		raw_value = read_msr(MSR_PKG_POWER_INFO);
+		thermal_spec_power = power_units * ((double)(raw_value & 0x7fff));
+		minimum_power = power_units * ((double)((raw_value >> 16) & 0x7fff));
+		maximum_power = power_units * ((double)((raw_value >> 32) & 0x7fff));
+		time_window = time_units * ((double)((raw_value >> 48) & 0x7fff));
+	} else {
+		thermal_spec_power = 0; 
+		minimum_power = 0;
+		maximum_power = 0;
+		time_window = 0;
+	
+	}
 	reset();
 }
 
@@ -103,6 +126,32 @@ void Rapl::reset() {
 	running_total.dram = 0;
 	gettimeofday(&(running_total.tsc), NULL);
 }
+int Rapl::detect_vendor(){
+	int v = 0;
+	uint32_t eax = 0;
+	union {
+	    struct {
+		uint32_t ebx;
+		uint32_t edx;
+		uint32_t ecx;
+	    };
+	    char vendor[13];
+	} u;
+	__asm__("cpuid;"
+		:"=a"(eax), "=b"(u.ebx), "=d"(u.edx), "=c"(u.ecx) // output operands
+		:"0"(eax) // input operand
+		);
+	u.vendor[12] = '\0'; // add the null terminator
+
+	printf("vendor = %s\n", u.vendor); // print the string
+	if (strcmp(u.vendor, "AuthenticAMD") == 0) {
+	    v = 1;
+	} else {
+	    v = 0;
+	}
+	return v;
+
+}
 
 bool Rapl::detect_pp1() {
 	uint32_t eax_input = 1;
@@ -111,12 +160,14 @@ bool Rapl::detect_pp1() {
 			:"=a"(eax)               // EAX into b (output)
 			:"0"(eax_input)          // 1 into EAX (input)
 			:"%ebx","%ecx","%edx");  // clobbered registers
+	
+	printf("eax = %X\n", eax);
 
 	uint32_t cpu_signature = eax & SIGNATURE_MASK;
     	#ifdef POWER_DEBUG
         	printf("CPU signature: %x\n", cpu_signature); fflush(stdout);
     	#endif
-	if (cpu_signature == SANDYBRIDGE_E || cpu_signature == IVYBRIDGE_E || cpu_signature == BROADWELL_E) {
+	if (vendor == 1 || cpu_signature == SANDYBRIDGE_E || cpu_signature == IVYBRIDGE_E || cpu_signature == BROADWELL_E) {
 		#ifdef POWER_DEBUG
 			printf("PP1 measure not compatible for CPU signature: %x\n", cpu_signature); fflush(stdout);
 		#endif
@@ -145,7 +196,7 @@ void Rapl::open_msr() {
 	}
 }
 
-uint64_t Rapl::read_msr(int msr_offset) {
+uint64_t Rapl::read_msr(uint32_t msr_offset) {
 	uint64_t data;
 	if (pread(fd, &data, sizeof(data), msr_offset) != sizeof(data)) {
 		perror("read_msr():pread");
@@ -157,16 +208,23 @@ uint64_t Rapl::read_msr(int msr_offset) {
 void Rapl::sample() {
 	uint32_t max_int = ~((uint32_t) 0);
 
-	next_state->pkg = read_msr(MSR_PKG_ENERGY_STATUS) & max_int;
-	next_state->pp0 = read_msr(MSR_PP0_ENERGY_STATUS) & max_int;
-
-	if (pp1_supported) {
-		next_state->pp1 = read_msr(MSR_PP1_ENERGY_STATUS) & max_int;
-		next_state->dram = 0;
-	} else {
+	if (vendor==0) {
+		next_state->pkg = read_msr(MSR_PKG_ENERGY_STATUS) & max_int;
+		next_state->pp0 = read_msr(MSR_PP0_ENERGY_STATUS) & max_int;
+		if (pp1_supported) {
+			next_state->pp1 = read_msr(MSR_PP1_ENERGY_STATUS) & max_int;
+			next_state->dram = 0;
+		} else {
+			next_state->pp1 = 0;
+			next_state->dram = read_msr(MSR_DRAM_ENERGY_STATUS) & max_int;
+		}
+	} else if (vendor==1) {
+		next_state->pkg = read_msr(AMD_MSR_PACKAGE_ENERGY) & max_int;
+		next_state->pp0 = 0;
 		next_state->pp1 = 0;
-		next_state->dram = read_msr(MSR_DRAM_ENERGY_STATUS) & max_int;
+		next_state->dram = 0;
 	}
+
 
 	gettimeofday(&(next_state->tsc), NULL);
 
