@@ -10,6 +10,10 @@
 #ifndef RAPL_H_
 #define RAPL_H_
 
+#define MAX_LINE 256
+#define MAX_CPU 256
+#define MAX_SOCKETS 8
+
 struct rapl_state_t {
 	uint64_t pkg;
 	uint64_t pp0;
@@ -27,6 +31,11 @@ private:
 	bool pp1_supported = true;
 	//vendor 0=Intel, 1=AMD
 	int vendor;
+	int n_sockets;
+	int smt;
+	int n_logical_cores;
+	int sockets[MAX_SOCKETS];
+	int first_lcoreid[MAX_SOCKETS];
 	double power_units, energy_units, time_units;
 	double thermal_spec_power, minimum_power, maximum_power, time_window;
 
@@ -37,7 +46,7 @@ private:
 	rapl_state_t state1, state2, state3, running_total;
 
 	bool detect_pp1();
-	int detect_vendor();
+	int get_vendor();
 	void open_msr();
 	uint64_t read_msr(uint32_t msr_offset);
 	double time_delta(struct timeval *begin, struct timeval *after);
@@ -66,6 +75,9 @@ public:
 
 	double total_time();
 	double current_time();
+	int get_n_sockets();
+	int get_n_logical_cores();
+	int get_smt();
 };
 
 #endif /* RAPL_H_ */
