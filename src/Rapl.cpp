@@ -77,20 +77,22 @@
 
 Rapl::Rapl() {
 
-	open_msr();
 	vendor = get_vendor();
 	n_sockets = get_n_sockets();
 	smt = get_smt();
 	n_logical_cores = get_n_logical_cores();
 	pp1_supported = detect_pp1();
 
+	for (int i=0; i<n_sockets; i++){
+		open_msr(i, first_lcoreid[i]);
+	}
 	/* Read MSR_RAPL_POWER_UNIT Register */
 	uint64_t raw_value;
 	printf("trying vendor units %u\n", vendor);
 	if (vendor == 0){
-		raw_value = read_msr(MSR_RAPL_POWER_UNIT);
+		raw_value = read_msr(0, MSR_RAPL_POWER_UNIT);
 	} else if (vendor == 1){
-		raw_value = read_msr(AMD_MSR_PWR_UNIT);
+		raw_value = read_msr(0, AMD_MSR_PWR_UNIT);
 	}
 	power_units = pow(0.5,	(double) (raw_value & 0xf));
 	energy_units = pow(0.5,	(double) ((raw_value >> 8) & 0x1f));
@@ -98,7 +100,7 @@ Rapl::Rapl() {
 
 	/* Read MSR_PKG_POWER_INFO Register */
 	if (vendor==0){
-		raw_value = read_msr(MSR_PKG_POWER_INFO);
+		raw_value = read_msr(0, MSR_PKG_POWER_INFO);
 		thermal_spec_power = power_units * ((double)(raw_value & 0x7fff));
 		minimum_power = power_units * ((double)((raw_value >> 16) & 0x7fff));
 		maximum_power = power_units * ((double)((raw_value >> 32) & 0x7fff));
@@ -115,19 +117,22 @@ Rapl::Rapl() {
 
 void Rapl::reset() {
 
-	prev_state = &state1;
-	current_state = &state2;
-	next_state = &state3;
+	for (int i=0; i<n_sockets; i++){
+		prev_state[i] = new rapl_state_t;
+		current_state[i] = new rapl_state_t;
+		next_state[i] = new rapl_state_t;
+		running_total[i] = new rapl_state_t;
 
-	// sample twice to fill current and previous
-	sample();
-	sample();
+		// sample twice to fill current and previous
+		sample(i);
+		sample(i);
 
-	// Initialize running_total
-	running_total.pkg = 0;
-	running_total.pp0 = 0;
-	running_total.dram = 0;
-	gettimeofday(&(running_total.tsc), NULL);
+		// Initialize running_total
+		running_total[i]->pkg = 0;
+		running_total[i]->pp0 = 0;
+		running_total[i]->dram = 0;
+		gettimeofday(&(running_total[i]->tsc), NULL);
+	}
 }
 int Rapl::get_n_logical_cores(){
 	uint32_t eax, ebx, ecx, edx;
@@ -149,11 +154,6 @@ int Rapl::get_smt(){
 			:"=a"(eax), "=b"(ebx), "=d"(edx), "=c"(ecx) // output operands
 			: // no input operand
 			);
-		if ((ebx & 0xFF00) >> 8 == 0){
-			printf("SMT disabled\n");
-		}else {
-			printf("SMT enabled\n");
-		}
 
 		return (ebx & 0xFF00) >> 8;
 	} else {
@@ -213,16 +213,16 @@ bool Rapl::detect_pp1() {
 	return true;
 }
 
-void Rapl::open_msr() {
+void Rapl::open_msr(int socket, int cpuCore) {
 	std::stringstream filename_stream;
-	filename_stream << "/dev/cpu/" << core << "/msr";
-	fd = open(filename_stream.str().c_str(), O_RDONLY);
-	if (fd < 0) {
+	filename_stream << "/dev/cpu/" << cpuCore << "/msr";
+	fd[socket] = open(filename_stream.str().c_str(), O_RDONLY);
+	if (fd[socket] < 0) {
 		if ( errno == ENXIO) {
-			fprintf(stderr, "rdmsr: No CPU %d\n", core);
+			fprintf(stderr, "rdmsr: No CPU %d\n", cpuCore);
 			exit(2);
 		} else if ( errno == EIO) {
-			fprintf(stderr, "rdmsr: CPU %d doesn't support MSRs\n", core);
+			fprintf(stderr, "rdmsr: CPU %d doesn't support MSRs\n", cpuCore);
 			exit(3);
 		} else {
 			perror("rdmsr:open");
@@ -233,57 +233,55 @@ void Rapl::open_msr() {
 	}
 }
 
-uint64_t Rapl::read_msr(uint32_t msr_offset) {
+uint64_t Rapl::read_msr(int socket, uint32_t msr_offset) {
 	uint64_t data;
-	if (pread(fd, &data, sizeof(data), msr_offset) != sizeof(data)) {
+	if (pread(fd[socket], &data, sizeof(data), msr_offset) != sizeof(data)) {
 		perror("read_msr():pread");
 		exit(127);
 	}
 	return data;
 }
 
-void Rapl::sample() {
-	uint32_t max_int = ~((uint32_t) 0);
-	next_state->pkg = 0;
-	next_state->pp0 = 0;
-	next_state->pp1 = 0;
-	next_state->dram = 0;
-
+void Rapl::sample(){
 	for (int i=0; i<n_sockets; i++){
-		core = first_lcoreid[i];
-		if (vendor==0) {
-			next_state->pkg += read_msr(MSR_PKG_ENERGY_STATUS) & max_int;
-			next_state->pp0 += read_msr(MSR_PP0_ENERGY_STATUS) & max_int;
-			if (pp1_supported) {
-				next_state->pp1 += read_msr(MSR_PP1_ENERGY_STATUS) & max_int;
-				next_state->dram += 0;
-			} else {
-				next_state->pp1 += 0;
-				next_state->dram += read_msr(MSR_DRAM_ENERGY_STATUS) & max_int;
-			}
-		} else if (vendor==1) {
-			next_state->pkg += read_msr(AMD_MSR_PACKAGE_ENERGY) & max_int;
-			next_state->pp0 += 0;
-			next_state->pp1 += 0;
-			next_state->dram += 0;
+		sample(i);
+	}
+}
+void Rapl::sample(int socket) {
+	uint32_t max_int = ~((uint32_t) 0);
+
+	if (vendor==0) {
+		next_state[socket]->pkg = read_msr(socket, MSR_PKG_ENERGY_STATUS) & max_int;
+		next_state[socket]->pp0 = read_msr(socket, MSR_PP0_ENERGY_STATUS) & max_int;
+		if (pp1_supported) {
+			next_state[socket]->pp1 = read_msr(socket, MSR_PP1_ENERGY_STATUS) & max_int;
+			next_state[socket]->dram = 0;
+		} else {
+			next_state[socket]->pp1 = 0;
+			next_state[socket]->dram = read_msr(socket, MSR_DRAM_ENERGY_STATUS) & max_int;
 		}
+	} else if (vendor==1) {
+		uint64_t val = read_msr(socket, AMD_MSR_PACKAGE_ENERGY) & max_int;
+		next_state[socket]->pkg = val;
+		next_state[socket]->pp0 = 0;
+		next_state[socket]->pp1 = 0;
+		next_state[socket]->dram = 0;
 	}
 
-
-	gettimeofday(&(next_state->tsc), NULL);
+	gettimeofday(&(next_state[socket]->tsc), NULL);
 
 
 	// Update running total
-	running_total.pkg += energy_delta(current_state->pkg, next_state->pkg);
-	running_total.pp0 += energy_delta(current_state->pp0, next_state->pp0);
-	running_total.pp1 += energy_delta(current_state->pp0, next_state->pp0);
-	running_total.dram += energy_delta(current_state->dram, next_state->dram);
+	running_total[socket]->pkg += energy_delta(current_state[socket]->pkg, next_state[socket]->pkg);
+	running_total[socket]->pp0 += energy_delta(current_state[socket]->pp0, next_state[socket]->pp0);
+	running_total[socket]->pp1 += energy_delta(current_state[socket]->pp0, next_state[socket]->pp0);
+	running_total[socket]->dram += energy_delta(current_state[socket]->dram, next_state[socket]->dram);
 
 	// Rotate states
-	rapl_state_t *pprev_state = prev_state;
-	prev_state = current_state;
-	current_state = next_state;
-	next_state = pprev_state;
+	rapl_state_t *pprev_state = prev_state[socket];
+	prev_state[socket] = current_state[socket];
+	current_state[socket] = next_state[socket];
+	next_state[socket] = pprev_state;
 }
 
 double Rapl::time_delta(struct timeval *begin, struct timeval *end) {
@@ -310,23 +308,39 @@ uint64_t Rapl::energy_delta(uint64_t before, uint64_t after) {
 }
 
 double Rapl::pkg_current_power() {
-	double t = time_delta(&(prev_state->tsc), &(current_state->tsc));
-	return power(prev_state->pkg, current_state->pkg, t);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		double t = time_delta(&(prev_state[i]->tsc), &(current_state[i]->tsc));
+		double pp = power(prev_state[i]->pkg, current_state[i]->pkg, t);
+		p+=pp;
+	}
+	return p;
 }
 
 double Rapl::pp0_current_power() {
-	double t = time_delta(&(prev_state->tsc), &(current_state->tsc));
-	return power(prev_state->pp0, current_state->pp0, t);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		double t = time_delta(&(prev_state[i]->tsc), &(current_state[i]->tsc));
+		p+= power(prev_state[i]->pp0, current_state[i]->pp0, t);
+	}
+	return p;
 }
 
 double Rapl::pp1_current_power() {
-	double t = time_delta(&(prev_state->tsc), &(current_state->tsc));
-	return power(prev_state->pp1, current_state->pp1, t);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		double t = time_delta(&(prev_state[i]->tsc), &(current_state[i]->tsc));
+		p += power(prev_state[i]->pp1, current_state[i]->pp1, t);
+	}
 }
 
 double Rapl::dram_current_power() {
-	double t = time_delta(&(prev_state->tsc), &(current_state->tsc));
-	return power(prev_state->dram, current_state->dram, t);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		double t = time_delta(&(prev_state[i]->tsc), &(current_state[i]->tsc));
+		p+=power(prev_state[i]->dram, current_state[i]->dram, t);
+	}
+	return p;
 }
 
 double Rapl::pkg_average_power() {
@@ -346,27 +360,43 @@ double Rapl::dram_average_power() {
 }
 
 double Rapl::pkg_total_energy() {
-	return energy_units * ((double) running_total.pkg);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		p += energy_units * ((double) running_total[i]->pkg);
+	}
+	return p;
 }
 
 double Rapl::pp0_total_energy() {
-	return energy_units * ((double) running_total.pp0);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		p += energy_units * ((double) running_total[i]->pp0);
+	}
+	return p;
 }
 
 double Rapl::pp1_total_energy() {
-	return energy_units * ((double) running_total.pp1);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		p += energy_units * ((double) running_total[i]->pp1);
+	}
+	return p;
 }
 
 double Rapl::dram_total_energy() {
-	return energy_units * ((double) running_total.dram);
+	double p = 0.0;
+	for (int i=0; i<n_sockets; i++){
+		p += energy_units * ((double) running_total[i]->dram);
+	}
+	return p;
 }
 
 double Rapl::total_time() {
-	return time_delta(&(running_total.tsc), &(current_state->tsc));
+	return time_delta(&(running_total[0]->tsc), &(current_state[0]->tsc));
 }
 
 double Rapl::current_time() {
-	return time_delta(&(prev_state->tsc), &(current_state->tsc));
+	return time_delta(&(prev_state[0]->tsc), &(current_state[0]->tsc));
 }
 
 int Rapl::get_n_sockets(){
